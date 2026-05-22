@@ -1,208 +1,3 @@
-# RealSense Hand-Eye Calibration
-
-**Eye-in-hand calibration toolkit for Intel RealSense + robot arm, with multi-method comparison, outlier exclusion, and automatic diagnostics.**
-
----
-
-## Highlights
-
-- **Multi-method auto-comparison** — Solves with 4 algorithms (Tsai-Lenz, Park, Horaud, Daniilidis) simultaneously, auto-selects the best, and reports cross-method consistency.
-- **Outlier exclusion** — `--exclude` flag to manually drop bad samples identified from the verification output, preventing them from degrading overall accuracy.
-- **Arm angle diagnostics** — Automatically analyzes rx/ry/rz variation range; warns when rotation diversity is insufficient with specific suggestions.
-- **Correct verification** — Uses `gripper2base @ cam2gripper @ target2cam = constant` (target-in-base-frame consistency), not the common but incorrect `||AX - XB||`.
-- **Translation std analysis** — Reports per-axis translation standard deviation in mm for intuitive accuracy assessment.
-
----
-
-## Architecture
-
-```
-Windows (RealSense)                          WSL2 (ROS2)
-┌──────────────────────┐                    ┌────────────────────────────┐
-│ collect_camera.py    │──ZMQ trigger──────▶│ record_arm.py              │
-│  ├─ Chessboard detect│   (port 5558)      │  └─ Subscribes to          │
-│  ├─ solvePnP → pose  │                    │     ToolVectorActual       │
-│  └─ Save camera.json │                    │  └─ Saves arm.json         │
-└──────────────────────┘                    └────────────────────────────┘
-                       ┌────────────────────┐
-                       │ handeye_solver.py  │
-                       │  ├─ Loads both JSON│
-                       │  ├─ 4 methods solve│
-                       │  ├─ Auto-select best│
-                       │  └─ Verify + save  │
-                       └────────────────────┘
-```
-
----
-
-## Script Overview
-
-| Script | Runs on | Purpose |
-|--------|---------|---------|
-| `collect_camera.py` | **Windows** (needs RealSense + pyrealsense2) | Chessboard detection, camera pose recording, arm angle display |
-| `record_arm.py` | **WSL2 / Linux** (needs ROS2 + robot driver) | Subscribe to arm pose, record on trigger, broadcast angles back |
-| `handeye_solver.py` | **Either** (pure computation) | Solve AX=XB with 4 methods, verify, output result |
-
----
-
-## Quick Start
-
-### 1. Collect camera data (Windows)
-
-```bash
-pip install pyrealsense2 opencv-python pyzmq numpy
-python collect_camera.py --pattern 4 6 --square 15 --zmq-port 5558
-```
-
-Press **SPACE** when chessboard is detected (green overlay). Aim for 10-15 samples with diverse wrist orientations.
-
-### 2. Record arm data (ROS2 / WSL2)
-
-```bash
-# Check Windows IP
-ip route show default
-# → default via 172.23.224.1
-
-# Run recorder
-ros2 run <your_pkg> record_arm --ros-args \
-    -p windows_host:=172.23.224.1 -p zmq_port:=5558
-```
-
-### 3. Solve calibration
-
-Copy both JSON files to the same directory, then:
-
-```bash
-python handeye_solver.py --camera camera_data.json --arm arm_data.json
-```
-
-Output: `handeye_result.json` with the 4x4 camera-to-gripper transform.
-
-To exclude bad samples (identified manually from the verification output — look for outlier indices with significantly larger errors):
-```bash
-python handeye_solver.py --camera camera_data.json --arm arm_data.json --exclude 4 7
-```
-
----
-
-## Input Data Format
-
-### camera_data.json (from collect_camera.py)
-
-```json
-{
-  "pattern": [4, 6],
-  "square_mm": 15.0,
-  "camera_matrix": [[fx, 0, cx], [0, fy, cy], [0, 0, 1]],
-  "dist_coeffs": [...],
-  "poses": [
-    {"idx": 1, "rvec": [...], "tvec": [...], "timestamp": ...},
-    ...
-  ]
-}
-```
-
-### arm_data.json (from record_arm.py)
-
-```json
-{
-  "arm_type": "dobot",
-  "poses": [
-    {"idx": 1, "x": 350.5, "y": -120.3, "z": 400.1, "rx": 180.0, "ry": 5.2, "rz": 90.0},
-    ...
-  ]
-}
-```
-
-Units: position in mm, angles in degrees. The Euler convention is configurable via `--euler` (default: `zyx` = Rz@Ry@Rx).
-
----
-
-## Parameters
-
-### collect_camera.py
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--pattern` | 4 6 | Chessboard inner corners (cols, rows) — adjust to match your board |
-| `--square` | 15.0 | Square side length in mm — adjust to match your board |
-| `--zmq-port` | None | ZMQ trigger port for synchronized arm recording |
-
-### handeye_solver.py
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--camera` | camera_data.json | Camera data file path |
-| `--arm` | arm_data.json | Arm data file path |
-| `--out` | handeye_result.json | Output file path |
-| `--exclude` | (none) | Sample indices to exclude, e.g. `--exclude 4 7` |
-| `--euler` | zyx | Euler angle convention: `zyx`, `xyz`, or `zyz` |
-
----
-
-## Algorithms
-
-| Method | Description |
-|--------|-------------|
-| **Tsai-Lenz** | Classic two-stage method (rotation then translation) |
-| **Park** | Lie group based; often most accurate for well-distributed data |
-| **Horaud** | Eigenvalue decomposition approach |
-| **Daniilidis** | Dual quaternion based; handles noise well |
-
-The solver tries all four and reports each method's error. The best (lowest verification error) is selected automatically.
-
----
-
-## Coordinate Convention
-
-```
-AX = XB  where:
-  A = target_to_camera   (from solvePnP)
-  B = gripper_to_base    (from robot controller)
-  X = camera_to_gripper  (the calibration result)
-```
-
-Verification formula:
-```
-T_target_in_base = gripper2base @ cam2gripper @ target2cam
-```
-This should be constant across all samples — any variation indicates calibration error.
-
----
-
-## Example Output
-
-```json
-{
-  "method": "Park",
-  "euler_convention": "zyx",
-  "matrix_4x4": [[...4x4...]],
-  "translation_mm": [58.54, 71.35, 117.35],
-  "translation_std_mm": [0.83, 0.57, 0.87],
-  "verification_errors": [0.0, 0.012, 0.008, ...]
-}
-```
-
----
-
-## Requirements
-
-- Python 3.8+
-- OpenCV (with contrib, for `calibrateHandEye`)
-- NumPy
-- pyzmq (for synchronized data collection)
-- pyrealsense2 (for `collect_camera.py`)
-- ROS2 Humble (for `record_arm.py`)
-
----
-
-## License
-
-MIT
-
----
----
-
 # RealSense 手眼标定
 
 **基于 Intel RealSense + 机械臂的 eye-in-hand 手眼标定工具包，支持多算法对比、异常点排除、自动诊断。**
@@ -402,5 +197,210 @@ T_target_in_base = gripper2base @ cam2gripper @ target2cam
 ---
 
 ## 许可证
+
+MIT
+
+---
+---
+
+# RealSense Hand-Eye Calibration
+
+**Eye-in-hand calibration toolkit for Intel RealSense + robot arm, with multi-method comparison, outlier exclusion, and automatic diagnostics.**
+
+---
+
+## Highlights
+
+- **Multi-method auto-comparison** — Solves with 4 algorithms (Tsai-Lenz, Park, Horaud, Daniilidis) simultaneously, auto-selects the best, and reports cross-method consistency.
+- **Outlier exclusion** — `--exclude` flag to manually drop bad samples identified from the verification output, preventing them from degrading overall accuracy.
+- **Arm angle diagnostics** — Automatically analyzes rx/ry/rz variation range; warns when rotation diversity is insufficient with specific suggestions.
+- **Correct verification** — Uses `gripper2base @ cam2gripper @ target2cam = constant` (target-in-base-frame consistency), not the common but incorrect `||AX - XB||`.
+- **Translation std analysis** — Reports per-axis translation standard deviation in mm for intuitive accuracy assessment.
+
+---
+
+## Architecture
+
+```
+Windows (RealSense)                          WSL2 (ROS2)
+┌──────────────────────┐                    ┌────────────────────────────┐
+│ collect_camera.py    │──ZMQ trigger──────▶│ record_arm.py              │
+│  ├─ Chessboard detect│   (port 5558)      │  └─ Subscribes to          │
+│  ├─ solvePnP → pose  │                    │     ToolVectorActual       │
+│  └─ Save camera.json │                    │  └─ Saves arm.json         │
+└──────────────────────┘                    └────────────────────────────┘
+                       ┌────────────────────┐
+                       │ handeye_solver.py  │
+                       │  ├─ Loads both JSON│
+                       │  ├─ 4 methods solve│
+                       │  ├─ Auto-select best│
+                       │  └─ Verify + save  │
+                       └────────────────────┘
+```
+
+---
+
+## Script Overview
+
+| Script | Runs on | Purpose |
+|--------|---------|---------|
+| `collect_camera.py` | **Windows** (needs RealSense + pyrealsense2) | Chessboard detection, camera pose recording, arm angle display |
+| `record_arm.py` | **WSL2 / Linux** (needs ROS2 + robot driver) | Subscribe to arm pose, record on trigger, broadcast angles back |
+| `handeye_solver.py` | **Either** (pure computation) | Solve AX=XB with 4 methods, verify, output result |
+
+---
+
+## Quick Start
+
+### 1. Collect camera data (Windows)
+
+```bash
+pip install pyrealsense2 opencv-python pyzmq numpy
+python collect_camera.py --pattern 4 6 --square 15 --zmq-port 5558
+```
+
+Press **SPACE** when chessboard is detected (green overlay). Aim for 10-15 samples with diverse wrist orientations.
+
+### 2. Record arm data (ROS2 / WSL2)
+
+```bash
+# Check Windows IP
+ip route show default
+# → default via 172.23.224.1
+
+# Run recorder
+ros2 run <your_pkg> record_arm --ros-args \
+    -p windows_host:=172.23.224.1 -p zmq_port:=5558
+```
+
+### 3. Solve calibration
+
+Copy both JSON files to the same directory, then:
+
+```bash
+python handeye_solver.py --camera camera_data.json --arm arm_data.json
+```
+
+Output: `handeye_result.json` with the 4x4 camera-to-gripper transform.
+
+To exclude bad samples (identified manually from the verification output — look for outlier indices with significantly larger errors):
+```bash
+python handeye_solver.py --camera camera_data.json --arm arm_data.json --exclude 4 7
+```
+
+---
+
+## Input Data Format
+
+### camera_data.json (from collect_camera.py)
+
+```json
+{
+  "pattern": [4, 6],
+  "square_mm": 15.0,
+  "camera_matrix": [[fx, 0, cx], [0, fy, cy], [0, 0, 1]],
+  "dist_coeffs": [...],
+  "poses": [
+    {"idx": 1, "rvec": [...], "tvec": [...], "timestamp": ...},
+    ...
+  ]
+}
+```
+
+### arm_data.json (from record_arm.py)
+
+```json
+{
+  "arm_type": "dobot",
+  "poses": [
+    {"idx": 1, "x": 350.5, "y": -120.3, "z": 400.1, "rx": 180.0, "ry": 5.2, "rz": 90.0},
+    ...
+  ]
+}
+```
+
+Units: position in mm, angles in degrees. The Euler convention is configurable via `--euler` (default: `zyx` = Rz@Ry@Rx).
+
+---
+
+## Parameters
+
+### collect_camera.py
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--pattern` | 4 6 | Chessboard inner corners (cols, rows) — adjust to match your board |
+| `--square` | 15.0 | Square side length in mm — adjust to match your board |
+| `--zmq-port` | None | ZMQ trigger port for synchronized arm recording |
+
+### handeye_solver.py
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--camera` | camera_data.json | Camera data file path |
+| `--arm` | arm_data.json | Arm data file path |
+| `--out` | handeye_result.json | Output file path |
+| `--exclude` | (none) | Sample indices to exclude, e.g. `--exclude 4 7` |
+| `--euler` | zyx | Euler angle convention: `zyx`, `xyz`, or `zyz` |
+
+---
+
+## Algorithms
+
+| Method | Description |
+|--------|-------------|
+| **Tsai-Lenz** | Classic two-stage method (rotation then translation) |
+| **Park** | Lie group based; often most accurate for well-distributed data |
+| **Horaud** | Eigenvalue decomposition approach |
+| **Daniilidis** | Dual quaternion based; handles noise well |
+
+The solver tries all four and reports each method's error. The best (lowest verification error) is selected automatically.
+
+---
+
+## Coordinate Convention
+
+```
+AX = XB  where:
+  A = target_to_camera   (from solvePnP)
+  B = gripper_to_base    (from robot controller)
+  X = camera_to_gripper  (the calibration result)
+```
+
+Verification formula:
+```
+T_target_in_base = gripper2base @ cam2gripper @ target2cam
+```
+This should be constant across all samples — any variation indicates calibration error.
+
+---
+
+## Example Output
+
+```json
+{
+  "method": "Park",
+  "euler_convention": "zyx",
+  "matrix_4x4": [[...4x4...]],
+  "translation_mm": [58.54, 71.35, 117.35],
+  "translation_std_mm": [0.83, 0.57, 0.87],
+  "verification_errors": [0.0, 0.012, 0.008, ...]
+}
+```
+
+---
+
+## Requirements
+
+- Python 3.8+
+- OpenCV (with contrib, for `calibrateHandEye`)
+- NumPy
+- pyzmq (for synchronized data collection)
+- pyrealsense2 (for `collect_camera.py`)
+- ROS2 Humble (for `record_arm.py`)
+
+---
+
+## License
 
 MIT

@@ -35,6 +35,16 @@ Windows (RealSense)                          WSL2 (ROS2)
 
 ---
 
+## Script Overview
+
+| Script | Runs on | Purpose |
+|--------|---------|---------|
+| `collect_camera.py` | **Windows** (needs RealSense + pyrealsense2) | Chessboard detection, camera pose recording, arm angle display |
+| `record_arm.py` | **WSL2 / Linux** (needs ROS2 + robot driver) | Subscribe to arm pose, record on trigger, broadcast angles back |
+| `handeye_solver.py` | **Either** (pure computation) | Solve AX=XB with 4 methods, verify, output result |
+
+---
+
 ## Quick Start
 
 ### 1. Collect camera data (Windows)
@@ -227,6 +237,16 @@ Windows (RealSense)                          WSL2 (ROS2)
                        │  └─ 验证 + 保存     │
                        └────────────────────┘
 ```
+
+---
+
+## 脚本说明
+
+| 脚本 | 运行环境 | 用途 |
+|------|----------|------|
+| `collect_camera.py` | **Windows**（需要 RealSense + pyrealsense2） | 棋盘格检测、相机位姿记录、实时显示臂角度 |
+| `record_arm.py` | **WSL2 / Linux**（需要 ROS2 + 机械臂驱动） | 订阅臂位姿、触发记录、回传角度数据 |
+| `handeye_solver.py` | **任意**（纯计算） | 四种算法解算 AX=XB、验证、输出结果 |
 
 ---
 

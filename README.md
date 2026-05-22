@@ -11,6 +11,7 @@
 - **角度变化诊断** — 自动分析 rx/ry/rz 变化范围，不足时给出具体建议（如"ry 变化只有 5°，需至少 20~30°"）。
 - **正确的验证公式** — 使用 `gripper2base @ cam2gripper @ target2cam = 常量`（目标在基座坐标系下的一致性验证），区别于常见但错误的 `||AX - XB||` 验证。
 - **平移标准差分析** — 输出三轴平移标准差（mm），直观评估精度。
+- **实时角度反馈** — 采集时相机画面实时显示机械臂 rx/ry/rz 角度及累计变化范围，不足时红色警告，辅助采集高质量数据。
 
 ---
 
@@ -216,6 +217,7 @@ MIT
 - **Arm angle diagnostics** — Automatically analyzes rx/ry/rz variation range; warns when rotation diversity is insufficient with specific suggestions.
 - **Correct verification** — Uses `gripper2base @ cam2gripper @ target2cam = constant` (target-in-base-frame consistency), not the common but incorrect `||AX - XB||`.
 - **Translation std analysis** — Reports per-axis translation standard deviation in mm for intuitive accuracy assessment.
+- **Real-time angle feedback** — Displays arm rx/ry/rz and accumulated rotation range on the camera feed during data collection, with red warnings when diversity is insufficient.
 
 ---
 

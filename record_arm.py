@@ -4,6 +4,9 @@ Hand-Eye Calibration — Arm Pose Recorder (ROS2 / WSL2)
 Subscribes to the robot arm's ToolVectorActual topic and records poses
 when triggered by the camera-side ZMQ signal from collect_camera.py.
 
+Also broadcasts the current arm pose back to the camera side so that
+rx/ry/rz angles can be displayed on the camera feed in real time.
+
 Requires:
     - ROS2 Humble
     - dobot_msgs_v4 package (or modify the topic/message type for your robot)
@@ -12,7 +15,9 @@ Requires:
 Usage:
     cd ~/my_robot_ws && source install/setup.bash
     ros2 run <your_pkg> record_arm --ros-args \
-        -p windows_host:=172.23.224.1 -p zmq_port:=5558
+        -p windows_host:=172.23.224.1 \
+        -p zmq_port:=5558 \
+        -p feedback_port:=5559
 
 Output:
     ~/arm_data.json  — Recorded arm poses matched to camera triggers
@@ -39,9 +44,11 @@ class CalibrationRecorder(Node):
 
         self.declare_parameter('windows_host', '172.28.80.1')
         self.declare_parameter('zmq_port', 5558)
+        self.declare_parameter('feedback_port', 5559)
 
         host = self.get_parameter('windows_host').value
         port = self.get_parameter('zmq_port').value
+        fb_port = self.get_parameter('feedback_port').value
 
         # Current arm pose
         self._arm_pose = {}
@@ -56,15 +63,25 @@ class CalibrationRecorder(Node):
 
         self._collected = []
 
-        # ZMQ subscriber (separate thread)
+        # ZMQ subscriber for camera triggers (separate thread)
         self._running = True
         self._zmq_thread = threading.Thread(
             target=self._zmq_loop, args=(host, port), daemon=True
         )
         self._zmq_thread.start()
 
+        # ZMQ PUSH for arm pose feedback (sends to camera side for display)
+        self._fb_ctx = zmq.Context()
+        self._fb_push = self._fb_ctx.socket(zmq.PUSH)
+        self._fb_push.connect(f'tcp://{host}:{fb_port}')
+
+        # Broadcast arm pose every 200ms
+        self.create_timer(0.2, self._broadcast_pose)
+
         self.create_timer(5.0, self._status)
-        self.get_logger().info(f'Calibration recorder ready -> tcp://{host}:{port}')
+        self.get_logger().info(
+            f'Calibration recorder ready -> tcp://{host}:{port} '
+            f'(feedback -> {host}:{fb_port})')
 
     def arm_callback(self, msg: ToolVectorActual):
         """Store the latest arm pose. Adapt for your robot's message type."""
@@ -76,6 +93,15 @@ class CalibrationRecorder(Node):
             "ry": msg.ry,
             "rz": msg.rz,
         }
+
+    def _broadcast_pose(self):
+        """Send current arm pose to the camera side for display."""
+        if self._arm_pose:
+            try:
+                msg = json.dumps({"type": "arm_pose", **self._arm_pose})
+                self._fb_push.send_string(msg, zmq.NOBLOCK)
+            except zmq.Again:
+                pass
 
     def _zmq_loop(self, host, port):
         ctx = zmq.Context()
@@ -136,6 +162,8 @@ class CalibrationRecorder(Node):
         else:
             self.get_logger().warn('No arm poses collected')
 
+        self._fb_push.close()
+        self._fb_ctx.term()
         super().destroy_node()
 
 

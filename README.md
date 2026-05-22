@@ -7,7 +7,7 @@
 ## Highlights
 
 - **Multi-method auto-comparison** — Solves with 4 algorithms (Tsai-Lenz, Park, Horaud, Daniilidis) simultaneously, auto-selects the best, and reports cross-method consistency.
-- **Outlier exclusion** — `--exclude` flag to drop bad samples that would degrade accuracy.
+- **Outlier exclusion** — `--exclude` flag to manually drop bad samples identified from the verification output, preventing them from degrading overall accuracy.
 - **Arm angle diagnostics** — Automatically analyzes rx/ry/rz variation range; warns when rotation diversity is insufficient with specific suggestions.
 - **Correct verification** — Uses `gripper2base @ cam2gripper @ target2cam = constant` (target-in-base-frame consistency), not the common but incorrect `||AX - XB||`.
 - **Translation std analysis** — Reports per-axis translation standard deviation in mm for intuitive accuracy assessment.
@@ -68,7 +68,10 @@ python handeye_solver.py --camera camera_data.json --arm arm_data.json
 
 Output: `handeye_result.json` with the 4x4 camera-to-gripper transform.
 
-To exclude bad samples: `--exclude 4 7`
+To exclude bad samples (identified manually from the verification output — look for outlier indices with significantly larger errors):
+```bash
+python handeye_solver.py --camera camera_data.json --arm arm_data.json --exclude 4 7
+```
 
 ---
 
@@ -199,7 +202,7 @@ MIT
 ## 创新点
 
 - **多算法自动对比选优** — 同时使用 4 种算法（Tsai-Lenz、Park、Horaud、Daniilidis）求解，自动选误差最小的，并报告跨算法一致性。
-- **异常点检测与排除** — `--exclude` 参数排除坏样本，避免个别数据影响整体精度。
+- **异常点检测与排除** — 从验证输出中人工识别误差偏大的样本，用 `--exclude` 参数排除，避免个别坏数据影响整体精度。
 - **角度变化诊断** — 自动分析 rx/ry/rz 变化范围，不足时给出具体建议（如"ry 变化只有 5°，需至少 20~30°"）。
 - **正确的验证公式** — 使用 `gripper2base @ cam2gripper @ target2cam = 常量`（目标在基座坐标系下的一致性验证），区别于常见但错误的 `||AX - XB||` 验证。
 - **平移标准差分析** — 输出三轴平移标准差（mm），直观评估精度。
@@ -260,7 +263,10 @@ python handeye_solver.py --camera camera_data.json --arm arm_data.json
 
 输出：`handeye_result.json`，包含 4x4 相机到末端变换矩阵。
 
-排除坏样本：`--exclude 4 7`
+排除坏样本（从验证输出中人工识别误差明显偏大的 idx）：
+```bash
+python handeye_solver.py --camera camera_data.json --arm arm_data.json --exclude 4 7
+```
 
 ---
 
